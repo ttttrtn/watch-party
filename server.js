@@ -1,4 +1,3 @@
-```javascript
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
@@ -152,4 +151,4 @@ app.get("/watchparty.png", (req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Running on port ${PORT}`);
 });
-```
+
