@@ -1,3 +1,4 @@
+```javascript
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
@@ -6,6 +7,9 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 const IMAGE_PATH = path.join(__dirname, "watchparty.png");
+
+const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
+const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 
 let watchParty = {
   live: false,
@@ -19,6 +23,7 @@ app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   next();
 });
+
 
 /* Render page */
 app.get("/", (req, res) => {
@@ -55,66 +60,168 @@ ${
 `);
 });
 
-/* Return current data */
+
+/* Current watch party */
 app.get("/watchparty", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json(watchParty);
 });
 
-/* Download new image */
-app.get("/update", async (req, res) => {
-  try {
-    const name = String(req.query.name || "").trim();
-    const title = String(req.query.title || "").trim();
-    const imageURL = String(req.query.image || "").trim();
 
-    if (!name) {
-      return res.status(400).send("Missing name");
+/* Get Twitch app access token */
+async function getTwitchToken() {
+
+  if (!TWITCH_CLIENT_ID || !TWITCH_CLIENT_SECRET) {
+    throw new Error("Twitch API environment variables are missing");
+  }
+
+  const response = await fetch(
+    "https://id.twitch.tv/oauth2/token",
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type":
+          "application/x-www-form-urlencoded"
+      },
+
+      body:
+        "client_id=" +
+        encodeURIComponent(TWITCH_CLIENT_ID) +
+        "&client_secret=" +
+        encodeURIComponent(TWITCH_CLIENT_SECRET) +
+        "&grant_type=client_credentials"
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      "Could not get Twitch access token: " +
+      response.status
+    );
+  }
+
+  const data = await response.json();
+
+  return data.access_token;
+}
+
+
+/* Find Twitch profile picture */
+async function getTwitchProfileImage(username) {
+
+  const token = await getTwitchToken();
+
+  const response = await fetch(
+    "https://api.twitch.tv/helix/users?login=" +
+    encodeURIComponent(username),
+    {
+      headers: {
+        "Authorization": "Bearer " + token,
+        "Client-Id": TWITCH_CLIENT_ID
+      }
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      "Twitch user lookup failed: " +
+      response.status
+    );
+  }
+
+  const data = await response.json();
+
+  if (!data.data || data.data.length === 0) {
+    throw new Error(
+      "Twitch user not found: " + username
+    );
+  }
+
+  return {
+    displayName: data.data[0].display_name,
+    imageURL: data.data[0].profile_image_url
+  };
+}
+
+
+/* Download Twitch profile picture */
+async function downloadImage(imageURL) {
+
+  const response = await fetch(imageURL, {
+    headers: {
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      "Profile image download failed: " +
+      response.status
+    );
+  }
+
+  const buffer =
+    Buffer.from(await response.arrayBuffer());
+
+  fs.writeFileSync(IMAGE_PATH, buffer);
+}
+
+
+/* Update watch party */
+app.get("/update", async (req, res) => {
+
+  try {
+
+    const twitchName =
+      String(req.query.name || "").trim();
+
+    const title =
+      String(req.query.title || "").trim();
+
+    if (!twitchName) {
+      return res.status(400).send(
+        "Missing Twitch username"
+      );
     }
 
     if (!title) {
-      return res.status(400).send("Missing title");
+      return res.status(400).send(
+        "Missing title"
+      );
     }
 
-    if (!imageURL) {
-      return res.status(400).send("Missing image");
-    }
-
-    console.log("Downloading:", imageURL);
-
-    const response = await fetch(imageURL, {
-      headers: {
-        "User-Agent": "Mozilla/5.0"
-      }
-    });
-
-    if (!response.ok) {
-      return res
-        .status(400)
-        .send(`Download failed: ${response.status}`);
-    }
-
-    const contentType =
-      response.headers.get("content-type") || "";
-
-    if (!contentType.startsWith("image/")) {
-      return res.status(400).send("URL is not an image");
-    }
-
-    const buffer = Buffer.from(
-      await response.arrayBuffer()
+    console.log(
+      "Looking up Twitch user:",
+      twitchName
     );
 
-    fs.writeFileSync(IMAGE_PATH, buffer);
+    const twitch =
+      await getTwitchProfileImage(twitchName);
+
+    console.log(
+      "Downloading Twitch profile:",
+      twitch.imageURL
+    );
+
+    await downloadImage(twitch.imageURL);
 
     watchParty = {
       live: true,
-      name,
-      title,
-      image: `/watchparty.png?v=${Date.now()}`
+
+      name: twitch.displayName,
+
+      title: title,
+
+      image:
+        "/watchparty.png?v=" +
+        Date.now()
     };
 
-    console.log("Watch party updated:", watchParty);
+    console.log(
+      "Watch party updated:",
+      watchParty
+    );
 
     res.json({
       success: true,
@@ -122,13 +229,19 @@ app.get("/update", async (req, res) => {
     });
 
   } catch (error) {
+
     console.error(error);
-    res.status(500).send("Update failed");
+
+    res.status(500).send(
+      error.message || "Update failed"
+    );
   }
 });
 
+
 /* Turn off */
 app.get("/off", (req, res) => {
+
   watchParty.live = false;
 
   res.json({
@@ -136,19 +249,37 @@ app.get("/off", (req, res) => {
   });
 });
 
-/* Serve PNG */
+
+/* Serve profile PNG */
 app.get("/watchparty.png", (req, res) => {
+
   if (!fs.existsSync(IMAGE_PATH)) {
-    return res.status(404).send("No image");
+    return res.status(404).send(
+      "No image"
+    );
   }
 
-  res.setHeader("Content-Type", "image/png");
-  res.setHeader("Cache-Control", "no-store");
+  res.setHeader(
+    "Content-Type",
+    "image/png"
+  );
+
+  res.setHeader(
+    "Cache-Control",
+    "no-store"
+  );
 
   res.sendFile(IMAGE_PATH);
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Running on port ${PORT}`);
-});
 
+app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `Running on port ${PORT}`
+    );
+  }
+);
+```
