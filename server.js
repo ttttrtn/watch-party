@@ -1,4 +1,4 @@
-```javascript
+
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
@@ -27,34 +27,37 @@ app.use((req, res, next) => {
 
 /* Render page */
 app.get("/", (req, res) => {
+
+  const image = fs.existsSync(IMAGE_PATH)
+    ? `<img src="/watchparty.png?v=${Date.now()}">`
+    : "";
+
   res.send(`
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
+
 <style>
-html,body {
-  margin:0;
-  width:100%;
-  height:100%;
-  background:transparent;
-  overflow:hidden;
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
 }
 
 img {
-  width:100%;
-  height:100%;
-  object-fit:contain;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 </style>
+
 </head>
 
 <body>
-${
-  fs.existsSync(IMAGE_PATH)
-    ? `<img src="/watchparty.png?v=${Date.now()}">`
-    : ""
-}
+${image}
 </body>
 </html>
 `);
@@ -63,16 +66,26 @@ ${
 
 /* Current watch party */
 app.get("/watchparty", (req, res) => {
-  res.setHeader("Cache-Control", "no-store");
+
+  res.setHeader(
+    "Cache-Control",
+    "no-store"
+  );
+
   res.json(watchParty);
 });
 
 
-/* Get Twitch app access token */
+/* Get Twitch access token */
 async function getTwitchToken() {
 
-  if (!TWITCH_CLIENT_ID || !TWITCH_CLIENT_SECRET) {
-    throw new Error("Twitch API environment variables are missing");
+  if (
+    !TWITCH_CLIENT_ID ||
+    !TWITCH_CLIENT_SECRET
+  ) {
+    throw new Error(
+      "Missing TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET"
+    );
   }
 
   const response = await fetch(
@@ -87,38 +100,47 @@ async function getTwitchToken() {
 
       body:
         "client_id=" +
-        encodeURIComponent(TWITCH_CLIENT_ID) +
+        encodeURIComponent(
+          TWITCH_CLIENT_ID
+        ) +
         "&client_secret=" +
-        encodeURIComponent(TWITCH_CLIENT_SECRET) +
+        encodeURIComponent(
+          TWITCH_CLIENT_SECRET
+        ) +
         "&grant_type=client_credentials"
     }
   );
 
   if (!response.ok) {
     throw new Error(
-      "Could not get Twitch access token: " +
+      "Twitch token request failed: " +
       response.status
     );
   }
 
-  const data = await response.json();
+  const data =
+    await response.json();
 
   return data.access_token;
 }
 
 
-/* Find Twitch profile picture */
-async function getTwitchProfileImage(username) {
+/* Find Twitch user */
+async function getTwitchUser(username) {
 
-  const token = await getTwitchToken();
+  const token =
+    await getTwitchToken();
 
   const response = await fetch(
     "https://api.twitch.tv/helix/users?login=" +
     encodeURIComponent(username),
     {
       headers: {
-        "Authorization": "Bearer " + token,
-        "Client-Id": TWITCH_CLIENT_ID
+        "Authorization":
+          "Bearer " + token,
+
+        "Client-Id":
+          TWITCH_CLIENT_ID
       }
     }
   );
@@ -130,29 +152,33 @@ async function getTwitchProfileImage(username) {
     );
   }
 
-  const data = await response.json();
+  const data =
+    await response.json();
 
-  if (!data.data || data.data.length === 0) {
+  if (
+    !data.data ||
+    data.data.length === 0
+  ) {
     throw new Error(
-      "Twitch user not found: " + username
+      "Twitch user not found: " +
+      username
     );
   }
 
-  return {
-    displayName: data.data[0].display_name,
-    imageURL: data.data[0].profile_image_url
-  };
+  return data.data[0];
 }
 
 
 /* Download Twitch profile picture */
 async function downloadImage(imageURL) {
 
-  const response = await fetch(imageURL, {
-    headers: {
-      "User-Agent": "Mozilla/5.0"
-    }
-  });
+  const response =
+    await fetch(imageURL, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0"
+      }
+    });
 
   if (!response.ok) {
     throw new Error(
@@ -162,9 +188,14 @@ async function downloadImage(imageURL) {
   }
 
   const buffer =
-    Buffer.from(await response.arrayBuffer());
+    Buffer.from(
+      await response.arrayBuffer()
+    );
 
-  fs.writeFileSync(IMAGE_PATH, buffer);
+  fs.writeFileSync(
+    IMAGE_PATH,
+    buffer
+  );
 }
 
 
@@ -174,42 +205,60 @@ app.get("/update", async (req, res) => {
   try {
 
     const twitchName =
-      String(req.query.name || "").trim();
+      String(
+        req.query.name || ""
+      ).trim();
 
     const title =
-      String(req.query.title || "").trim();
+      String(
+        req.query.title || ""
+      ).trim();
 
     if (!twitchName) {
-      return res.status(400).send(
-        "Missing Twitch username"
-      );
+      return res
+        .status(400)
+        .send(
+          "Missing Twitch username"
+        );
     }
 
     if (!title) {
-      return res.status(400).send(
-        "Missing title"
-      );
+      return res
+        .status(400)
+        .send(
+          "Missing watch party title"
+        );
     }
 
+
     console.log(
-      "Looking up Twitch user:",
+      "Looking up Twitch:",
       twitchName
     );
 
-    const twitch =
-      await getTwitchProfileImage(twitchName);
+
+    const twitchUser =
+      await getTwitchUser(
+        twitchName
+      );
+
 
     console.log(
-      "Downloading Twitch profile:",
-      twitch.imageURL
+      "Twitch profile:",
+      twitchUser.profile_image_url
     );
 
-    await downloadImage(twitch.imageURL);
+
+    await downloadImage(
+      twitchUser.profile_image_url
+    );
+
 
     watchParty = {
       live: true,
 
-      name: twitch.displayName,
+      name:
+        twitchUser.display_name,
 
       title: title,
 
@@ -218,10 +267,12 @@ app.get("/update", async (req, res) => {
         Date.now()
     };
 
+
     console.log(
       "Watch party updated:",
       watchParty
     );
+
 
     res.json({
       success: true,
@@ -230,11 +281,17 @@ app.get("/update", async (req, res) => {
 
   } catch (error) {
 
-    console.error(error);
-
-    res.status(500).send(
-      error.message || "Update failed"
+    console.error(
+      "UPDATE ERROR:",
+      error
     );
+
+    res
+      .status(500)
+      .send(
+        error.message ||
+        "Update failed"
+      );
   }
 });
 
@@ -250,13 +307,15 @@ app.get("/off", (req, res) => {
 });
 
 
-/* Serve profile PNG */
+/* Serve downloaded profile picture */
 app.get("/watchparty.png", (req, res) => {
 
-  if (!fs.existsSync(IMAGE_PATH)) {
-    return res.status(404).send(
-      "No image"
-    );
+  if (
+    !fs.existsSync(IMAGE_PATH)
+  ) {
+    return res
+      .status(404)
+      .send("No image");
   }
 
   res.setHeader(
@@ -269,17 +328,21 @@ app.get("/watchparty.png", (req, res) => {
     "no-store"
   );
 
-  res.sendFile(IMAGE_PATH);
+  res.sendFile(
+    IMAGE_PATH
+  );
 });
 
 
+/* Start server */
 app.listen(
   PORT,
   "0.0.0.0",
   () => {
+
     console.log(
       `Running on port ${PORT}`
     );
+
   }
 );
-```
